@@ -9,6 +9,7 @@ from datetime import datetime
 import secrets
 from urllib.parse import parse_qs, unquote
 import threading
+import queue
 
 def print_(word):
     now = datetime.now().isoformat(" ").split(".")[0]
@@ -39,24 +40,7 @@ def getuseragent(index):
     except Exception as e:
         return 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
 
-def parse_and_reconstruct(url_encoded_string):
-    parsed_data = urllib.parse.parse_qs(url_encoded_string)
-    user_data_encoded = parsed_data.get('user', [None])[0]
-    
-    if user_data_encoded:
-        user_data_json = urllib.parse.unquote(user_data_encoded)
-    else:
-        user_data_json = None
-    
-    reconstructed_string = f"user={user_data_json}"
-    for key, value in parsed_data.items():
-        if key != 'user':
-            reconstructed_string += f"&{key}={value[0]}"
-    
-    return reconstructed_string
-
-def generate_random_hex(length=32):
-    return secrets.token_hex(length // 2)
+# Include all other helper functions here (parse_and_reconstruct, generate_random_hex, etc.)
 
 def login(query, useragent):
     url = 'https://api-backend.yescoin.gold/user/login'
@@ -89,8 +73,7 @@ def login(query, useragent):
         print_(f'Error making login request: {e}')
         return None
 
-# Add all other functions here (getgameinfo, getaccountinfo, collectCoin, etc.)
-# Make sure to include all the functions you've defined in your original script
+# Add all other API interaction functions here (getgameinfo, getaccountinfo, collectCoin, etc.)
 
 def parse_query(query: str):
     parsed_query = parse_qs(query)
@@ -122,9 +105,9 @@ def account_thread(query, index, selector_upgrade):
                 if codelogin == 0:
                     data = datalogin.get('data')
                     token = data.get('token')
-                    print_("Refresh Token")
+                    print_(f"Account {index}: Refresh Token")
                 else:
-                    print_(f"{datalogin.get('message')}")
+                    print_(f"Account {index}: {datalogin.get('message')}")
 
         # Add your main logic here
         # This should include all the operations you want to perform for each account
@@ -133,11 +116,11 @@ def account_thread(query, index, selector_upgrade):
         # Example (you need to implement these functions):
         # account_info = getaccountinfo(token, useragent)
         # if account_info:
-        #     print_(f"Account balance: {account_info['balance']}")
+        #     print_(f"Account {index} balance: {account_info['balance']}")
         
         # collect_coins_result = collectCoin(token, useragent, 250)
         # if collect_coins_result:
-        #     print_(f"Collected coins: {collect_coins_result['amount']}")
+        #     print_(f"Account {index} collected coins: {collect_coins_result['amount']}")
 
         # Implement all other operations here
 
@@ -145,19 +128,40 @@ def account_thread(query, index, selector_upgrade):
         print_(f"Account {index} waiting for {delay} seconds")
         time.sleep(delay)
 
+def worker(queue, selector_upgrade):
+    while True:
+        item = queue.get()
+        if item is None:
+            break
+        index, query = item
+        account_thread(query, index, selector_upgrade)
+        queue.task_done()
+
 def main():
     queries = load_credentials()
-    threads = []
+    q = queue.Queue()
 
     selector_upgrade = input("Auto Upgrade level y/n  : ").strip().lower()
 
-    for index, query in enumerate(queries):
-        thread = threading.Thread(target=account_thread, args=(query, index, selector_upgrade))
-        threads.append(thread)
-        thread.start()
+    # Create two worker threads
+    threads = []
+    for _ in range(2):
+        t = threading.Thread(target=worker, args=(q, selector_upgrade))
+        t.start()
+        threads.append(t)
 
-    for thread in threads:
-        thread.join()
+    # Add tasks to the queue
+    for index, query in enumerate(queries):
+        q.put((index, query))
+
+    # Block until all tasks are done
+    q.join()
+
+    # Stop workers
+    for _ in range(2):
+        q.put(None)
+    for t in threads:
+        t.join()
 
 if __name__ == "__main__":
     main()
